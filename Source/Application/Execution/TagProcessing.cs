@@ -3,6 +3,8 @@ using Common.Helpers;
 using Helpers;
 using LoggerManager.ConsoleLogger;
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using static TransactionValidator.Execution.Templates.TAC;
 
 namespace Application.Execution
@@ -18,18 +20,42 @@ namespace Application.Execution
 
             // Process IssuerActionCodeDefault Bytes
             DisplayLogger.WriteLine($"TAG 9F0D: {Utils.Split(terminalActionAnalysis.IssuerActionCodeDefault, 2, ' ')}");
-            byte[] iacdfBytes = ConversionHelper.HexToByteArray(terminalActionAnalysis.IssuerActionCodeDefault);
-            ProcessTACResponse(iacdfBytes);
+            byte[] iacDefaultBytes = ConversionHelper.HexToByteArray(terminalActionAnalysis.IssuerActionCodeDefault);
+            ProcessTACResponse(iacDefaultBytes);
 
             // Process IssuerActionCodeDenial Bytes
             DisplayLogger.WriteLine($"TAG 9F0E: {Utils.Split(terminalActionAnalysis.IssuerActionCodeDenial, 2, ' ')}");
-            byte[] iacdnBytes = ConversionHelper.HexToByteArray(terminalActionAnalysis.IssuerActionCodeDenial);
-            ProcessTACResponse(iacdnBytes);
+            byte[] iacDenialBytes = ConversionHelper.HexToByteArray(terminalActionAnalysis.IssuerActionCodeDenial);
+            ProcessTACResponse(iacDenialBytes);
 
             // Process IssuerActionCodeOnline Bytes
             DisplayLogger.WriteLine($"TAG 9F0F: {Utils.Split(terminalActionAnalysis.IssuerActionCodeOnline, 2, ' ')}");
-            byte[] iacoBytes = ConversionHelper.HexToByteArray(terminalActionAnalysis.IssuerActionCodeOnline);
-            ProcessTACResponse(iacoBytes);
+            byte[] iacOnlineBytes = ConversionHelper.HexToByteArray(terminalActionAnalysis.IssuerActionCodeOnline);
+            ProcessTACResponse(iacOnlineBytes);
+
+            // Evaluate Denial
+            DisplayLogger.WriteLine("\r\n**** TERMINAL ANALYSIS: DENIAL ****");
+            bool hasError = EvaluateTACList(tvrBytes, iacDenialBytes);
+            if (hasError)
+            {
+                DisplayLogger.WriteLine("**** TERMINAL ANALYSIS: FOUND ERROR(S) ****");
+            }
+
+            // Evaluate Default
+            DisplayLogger.WriteLine("\r\n**** TERMINAL ANALYSIS: DEFAULT ****");
+            hasError = EvaluateTACList(tvrBytes, iacDefaultBytes);
+            if (hasError)
+            {
+                DisplayLogger.WriteLine("**** TERMINAL ANALYSIS: FOUND ERROR(S) ****");
+            }
+
+            // Evaluate Online
+            DisplayLogger.WriteLine("\r\n**** TERMINAL ANALYSIS: ONLINE ****");
+            hasError = EvaluateTACList(tvrBytes, iacOnlineBytes);
+            if (hasError)
+            {
+                DisplayLogger.WriteLine("**** TERMINAL ANALYSIS: FOUND ERROR(S) ****");
+            }
         }
 
         private static void ProcessTACResponse(byte[] tvrBytes)
@@ -82,7 +108,7 @@ namespace Application.Execution
         private static void DisplayTACActiveValues(byte activeByte, Enum tacByteTemplate)
         {
             Array enumValues = Enum.GetValues(tacByteTemplate.GetType());
-            for (byte bitIndex = 8; bitIndex > 0; bitIndex--)
+            for (byte bitIndex = 7; bitIndex > 0; bitIndex--)
             {
                 byte tacByte = (byte)((activeByte >> bitIndex) & 0x01);
                 if (tacByte > 0)
@@ -92,5 +118,45 @@ namespace Application.Execution
                 }
             }
         }
+
+        private static bool EvaluateTACList(byte[] tvrBytes, byte[] iacDenialBytes)
+        {
+            bool isInError = false;
+
+            // examine each byte
+            int tacByteIndex = 1;
+            IEnumerable<(byte tac, byte iac)> tacAnalysis = tvrBytes.Zip(iacDenialBytes, (i, j) => (i, j));
+
+            foreach (var items in tacAnalysis)
+            {
+                DisplayLogger.WriteLine(string.Format("  BYTE {0}: [TAC-{1:X2}, IAC-{2:X2}]", tacByteIndex, items.tac, items.iac));
+                Enum tacByteTemplate = GetCurrentTemplateByIndex(tacByteIndex++);
+                Array enumValues = Enum.GetValues(tacByteTemplate.GetType());
+
+                // examine each bit
+                for (byte bitIndex = 7; bitIndex > 0; bitIndex--)
+                {
+                    byte tacByte = (byte)((items.tac >> bitIndex) & 0x01);
+                    byte iacByte = (byte)((items.iac >> bitIndex) & 0x01);
+                    if (tacByte > 0 && iacByte > 0)
+                    {
+                        string message = StringValueAttribute.GetStringValue((Enum)enumValues.GetValue(bitIndex));
+                        DisplayLogger.WriteLine(string.Format("          BIT-{0:D2}: {1}", bitIndex + 1, message));
+                        isInError = true;
+                    }
+                }
+            }
+            return isInError;
+        }
+
+        private static Enum GetCurrentTemplateByIndex(int tacByteIndex) => tacByteIndex switch
+        {
+            1 => new TACByte1(),
+            2 => new TACByte2(),
+            3 => new TACByte3(),
+            4 => new TACByte4(),
+            5 => new TACByte5(),
+            _ => throw new Exception("Invalid TACByte index")
+        };
     }
 }
